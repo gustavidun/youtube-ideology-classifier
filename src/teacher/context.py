@@ -42,24 +42,6 @@ class VideoAnalysis(BaseModel):
     political_saliency_reasoning: str = Field(description="Brief reasoning on video's political salience.")
     political_saliency: float = Field(description="Political salience of this video (0.0 = apolitical, 1.0 = explicit political commentary)", ge=0.0, le=1.0)
 
-class PairwiseEvaluation(BaseModel):
-    economic_overlap_reasoning: str = Field(
-        description="Reasoning on economic policy alignment, conflict, or irrelevance."
-    )
-    economic_similarity_score: float | None = Field(
-        default=None,
-        ge=-1.0, le=1.0,
-        description="Score from -1.0 to +1.0."
-    )
-    gal_tan_overlap_reasoning: str = Field(
-        description="Reasoning on GAL-TAN alignment, conflict, or irrelevance."
-    )
-    galtan_similarity_score: float | None = Field(
-        default=None,
-        ge=-1.0, le=1.0,
-        description="Score from -1.0 to +1.0."
-    )
-
 MODEL_NAME = "gpt-4o-mini"
 
 def query_model(system_prompt: str, user_prompt: str, response_format, client: OpenAI = client):
