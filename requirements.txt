@@ -1,0 +1,9 @@
+polars
+openai
+sentence-transformers
+datasets
+pandas
+python-dotenv
+httpx
+tenacity
+transformers[torch]
