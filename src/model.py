@@ -39,10 +39,9 @@ eval_dict = {
 }
 
 model = SentenceTransformer(
-    "Alibaba-NLP/gte-large-en-v1.5",
+    "BAAI/bge-m3",
     #model_kwargs={"attn_implementation": "sdpa", "device_map": "auto"},
     #tokenizer_kwargs={"padding_side": "left"}
-    trust_remote_code=True
 )
 
 model.max_seq_length = TRUNCATE
