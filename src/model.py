@@ -9,7 +9,7 @@ from config import MODEL_DIR, OUT_DIR
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-TRUNCATE = 512
+TRUNCATE = 1024
 
 economic_dataset = load_dataset(
     "parquet", 
