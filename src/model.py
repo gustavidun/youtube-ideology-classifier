@@ -3,6 +3,7 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers.sentence_transformer import losses
 from sentence_transformers.sentence_transformer.trainer import SentenceTransformerTrainer
 from sentence_transformers.sentence_transformer.training_args import SentenceTransformerTrainingArguments
+from sentence_transformers.sentence_transformer.evaluation import EmbeddingSimilarityEvaluator, SequentialEvaluator
 
 from config import MODEL_DIR, OUT_DIR
 
@@ -41,6 +42,7 @@ model = SentenceTransformer(
     "Alibaba-NLP/gte-large-en-v1.5",
     #model_kwargs={"attn_implementation": "sdpa", "device_map": "auto"},
     #tokenizer_kwargs={"padding_side": "left"}
+    trust_remote_code=True
 )
 
 model.max_seq_length = TRUNCATE
@@ -61,14 +63,34 @@ args = SentenceTransformerTrainingArguments(
     dataloader_num_workers=8,             
     dataloader_prefetch_factor=4,
     dataloader_pin_memory=True,
+    eval_strategy="steps",
+    eval_steps=500,
+    save_strategy="steps",
+    save_steps=500,
+    metric_for_best_model="eval_economic_spearman_cosine", # Optional: track best model
+    load_best_model_at_end=True
 )
+
+def create_similarity_evaluator(dataset, name):
+    return EmbeddingSimilarityEvaluator(
+        sentences1=dataset["sentence1"],
+        sentences2=dataset["sentence2"],
+        scores=dataset["score"], 
+        name=name,
+        show_progress_bar=False
+    )
+
+economic_evaluator = create_similarity_evaluator(eval_dict["economic_task"], "economic")
+galtan_evaluator = create_similarity_evaluator(eval_dict["gal_tan_task"], "galtan")
+combined_evaluator = SequentialEvaluator([economic_evaluator, galtan_evaluator])
 
 trainer = SentenceTransformerTrainer(
     model=model,
     args=args,
     train_dataset=train_dict,
     eval_dataset=eval_dict,
-    loss=loss_functions
+    loss=loss_functions,
+    evaluator=combined_evaluator
 )
 
 if __name__ == "__main__":
