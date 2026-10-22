@@ -7,3 +7,5 @@ python-dotenv
 httpx
 tenacity
 transformers[torch]
+flash-attn
+uv
