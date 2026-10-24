@@ -1,13 +1,30 @@
 import polars as pl
+from datasets import Dataset
 from config import OUT_DIR
 
 CONFIDENCE_THRESHOLD = 0.3
+TEST_SIZE = 0.1
+SEED = 42
+
+def process_and_split(df: pl.DataFrame, name: str):
+    """Converts Polars to HF Dataset, splits deterministically, and saves."""
+    hf_dataset = Dataset(df.to_arrow())
+    
+    split_dataset = hf_dataset.train_test_split(test_size=TEST_SIZE, seed=SEED)
+    
+    (OUT_DIR / "train").mkdir(parents=True, exist_ok=True)
+    (OUT_DIR / "test").mkdir(parents=True, exist_ok=True)
+    
+    split_dataset["train"].to_parquet(OUT_DIR / "train" / f"{name}.parquet")
+    split_dataset["test"].to_parquet(OUT_DIR / "test" / f"{name}.parquet")
+    
+    print(f"{name.capitalize()}: {len(split_dataset['train'])} train, {len(split_dataset['test'])} test")
 
 if __name__ == "__main__":
     context = pl.read_parquet(OUT_DIR / "context.parquet")
     pairs = pl.read_parquet(OUT_DIR / "pair_similarity.parquet")
 
-    #concatenate metadata
+    # concatenate metadata
     context = context.with_columns(
         assembled_text=pl.concat_str(
             [
@@ -19,7 +36,7 @@ if __name__ == "__main__":
         )
     )
 
-    #join
+    # join
     pairs = pairs.join(
         context.select(["id", "assembled_text"]), 
         left_on="id_a", 
@@ -54,10 +71,6 @@ if __name__ == "__main__":
         .rename({"overall_ideological_alignment": "score"})
     )
 
-    (OUT_DIR / "train").mkdir(parents=True, exist_ok=True)
-
-    economic.write_parquet(OUT_DIR / "train" / "economic.parquet")
-    galtan.write_parquet(OUT_DIR / "train" / "galtan.parquet")
-    overall.write_parquet(OUT_DIR / "train" / "overall.parquet")
-
-    print(len(economic), len(galtan), len(overall))
+    process_and_split(economic, "economic")
+    process_and_split(galtan, "galtan")
+    process_and_split(overall, "overall")

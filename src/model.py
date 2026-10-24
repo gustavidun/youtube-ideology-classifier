@@ -1,3 +1,6 @@
+import argparse
+import os
+import yaml
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.sentence_transformer import losses
@@ -5,92 +8,51 @@ from sentence_transformers.sentence_transformer.trainer import SentenceTransform
 from sentence_transformers.sentence_transformer.training_args import SentenceTransformerTrainingArguments
 from sentence_transformers.sentence_transformer.evaluation import EmbeddingSimilarityEvaluator, SequentialEvaluator
 
-from config import MODEL_DIR, OUT_DIR
+from config import OUT_DIR, ROOT
 
-import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-TRUNCATE = 1024
+def train():
+    parser = argparse.ArgumentParser(description="Train a political sentence embedding model from a config file.")
+    parser.add_argument("--path", required=True, help="Path to YAML or JSON config file")
+    args_cli = parser.parse_args()
 
-economic_dataset = load_dataset(
-    "parquet", 
-    data_files=str(OUT_DIR / "train" / "economic.parquet"), 
-    split="train", 
-    keep_in_memory=True  
-)
-galtan_dataset = load_dataset(
-    "parquet", 
-    data_files=str(OUT_DIR / "train" / "galtan.parquet"), 
-    split="train", 
-    keep_in_memory=True
-)
+    with open(args_cli.path) as f:
+        cfg = yaml.safe_load(f)
+        
+    model = SentenceTransformer(cfg["model_name"])
+    if "max_seq_length" in cfg:
+        model.max_seq_length = cfg["max_seq_length"]
 
-economic_split = economic_dataset.train_test_split(test_size=0.1)
-galtan_split = galtan_dataset.train_test_split(test_size=0.1)
+    train_dict, eval_dict, loss_functions = {}, {}, {}
+    for task in cfg.get("tasks", ["galtan"]):
+        ds = load_dataset(
+            "parquet",
+            data_files={
+                "train": str(OUT_DIR / "train" / f"{task}.parquet"),
+                "test": str(OUT_DIR / "test" / f"{task}.parquet"),
+            },
+            keep_in_memory=True,
+        )
+        task_key = f"{task}_task"
+        train_dict[task_key] = ds["train"]
+        eval_dict[task_key] = ds["test"]
+        loss_functions[task_key] = losses.CoSENTLoss(model)
 
-train_dict = {
-    "economic_task": economic_split["train"],
-    "gal_tan_task": galtan_split["train"]
-}
+    training_args = cfg.get("training_args", {})
+    out_dir = training_args.get("output_dir", "models/political-embedder")
+    training_args["output_dir"] = str(ROOT / out_dir) if not os.path.isabs(out_dir) else out_dir
+    args = SentenceTransformerTrainingArguments(**training_args)
 
-eval_dict = {
-    "economic_task": economic_split["test"],
-    "gal_tan_task": galtan_split["test"]
-}
-
-model = SentenceTransformer(
-    "BAAI/bge-m3",
-    #model_kwargs={"attn_implementation": "sdpa", "device_map": "auto"},
-    #tokenizer_kwargs={"padding_side": "left"}
-)
-
-model.max_seq_length = TRUNCATE
-
-
-loss_functions = {
-    "economic_task": losses.CoSENTLoss(model),
-    "gal_tan_task": losses.CoSENTLoss(model)
-}
-
-args = SentenceTransformerTrainingArguments(
-    output_dir=str(MODEL_DIR / "qwen-political-embedder-final"),
-    multi_dataset_batch_sampler="round_robin",
-    num_train_epochs=1,
-    learning_rate=2e-5,
-    per_device_train_batch_size=16,                       
-    bf16=True,
-    dataloader_num_workers=8,             
-    dataloader_prefetch_factor=4,
-    dataloader_pin_memory=True,
-    eval_strategy="steps",
-    eval_steps=500,
-    save_strategy="steps",
-    save_steps=500,
-    metric_for_best_model="eval_economic_spearman_cosine", # Optional: track best model
-    load_best_model_at_end=True
-)
-
-def create_similarity_evaluator(dataset, name):
-    return EmbeddingSimilarityEvaluator(
-        sentences1=dataset["sentence1"],
-        sentences2=dataset["sentence2"],
-        scores=dataset["score"], 
-        name=name,
-        show_progress_bar=False
+    trainer = SentenceTransformerTrainer(
+        model=model,
+        args=args,
+        train_dataset=train_dict,
+        eval_dataset=eval_dict,
+        loss=loss_functions
     )
+    trainer.train()
 
-economic_evaluator = create_similarity_evaluator(eval_dict["economic_task"], "economic")
-galtan_evaluator = create_similarity_evaluator(eval_dict["gal_tan_task"], "galtan")
-combined_evaluator = SequentialEvaluator([economic_evaluator, galtan_evaluator])
-
-trainer = SentenceTransformerTrainer(
-    model=model,
-    args=args,
-    train_dataset=train_dict,
-    eval_dataset=eval_dict,
-    loss=loss_functions,
-    evaluator=combined_evaluator
-)
 
 if __name__ == "__main__":
-    trainer.train() 
+    train()

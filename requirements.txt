@@ -9,3 +9,5 @@ tenacity
 transformers[torch]
 flash-attn
 uv
+umap-learn
+statsmodels
