@@ -3,8 +3,8 @@ from pathlib import Path
 import polars as pl
 from openai.lib._parsing._completions import type_to_response_format_param
 
-from config import OUT_DIR, SLANTS_TRAIN
-from teacher.context import (
+from src.config import OUT_DIR, SLANTS_TRAIN
+from src.teacher.context import (
     client, MODEL_NAME, PAIRS_PER_VIDEO,
     VIDEO_ANALYSIS_PROMPT, PAIRWISE_PROMPT,
     VideoAnalysis, PairwiseEvaluation,

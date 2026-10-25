@@ -11,3 +11,4 @@ flash-attn
 uv
 umap-learn
 statsmodels
+wordcloud

@@ -8,7 +8,7 @@ from sentence_transformers.sentence_transformer.trainer import SentenceTransform
 from sentence_transformers.sentence_transformer.training_args import SentenceTransformerTrainingArguments
 from sentence_transformers.sentence_transformer.evaluation import EmbeddingSimilarityEvaluator, SequentialEvaluator
 
-from config import OUT_DIR, ROOT
+from src.config import OUT_DIR, ROOT
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -19,7 +19,7 @@ def train():
 
     with open(args_cli.path) as f:
         cfg = yaml.safe_load(f)
-        
+
     model = SentenceTransformer(cfg["model_name"])
     if "max_seq_length" in cfg:
         model.max_seq_length = cfg["max_seq_length"]

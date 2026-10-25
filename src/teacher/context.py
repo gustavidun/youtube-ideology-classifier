@@ -7,8 +7,9 @@ import polars as pl
 from openai import OpenAI
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from pathlib import Path
 
-from config import OUT_DIR, SLANTS_TRAIN, ROOT
+from src.config import OUT_DIR, SLANTS_TRAIN, ROOT
 
 load_dotenv(ROOT / ".env", override=True)
 
@@ -80,6 +81,18 @@ def analyze_video(video_data: dict, client: OpenAI = client):
         "completion_tokens": usage.completion_tokens,
     }
 
+def analyze_videos(videos : list[dict], dest : Path):
+    """Analyze videos in batches and save to dest."""
+    df_videos = pl.read_parquet(dest) if dest.exists() else pl.DataFrame()
+    if len(df_videos) < len(videos):
+        remaining = videos[len(df_videos):]
+        for i in range(0, len(remaining), CHUNK_SIZE):
+            chunk = remaining[i : i + CHUNK_SIZE]
+            with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
+                analyses = list(tqdm(executor.map(analyze_video, chunk), total=len(chunk), desc=f"Stage 1 chunk {i // CHUNK_SIZE + 1}"))
+            df_videos = pl.concat([df_videos, pl.DataFrame(analyses)])
+            df_videos.write_parquet(dest)
+    print(f"{len(df_videos)} analyzed videos ready in {dest.name}")
 
 CHUNK_SIZE = 5000
 
@@ -96,13 +109,6 @@ if __name__ == "__main__":
         .to_dicts()
     )
 
-    df_videos = pl.read_parquet(filter_parquet) if filter_parquet.exists() else pl.DataFrame()
-    if len(df_videos) < len(videos):
-        remaining = videos[len(df_videos):]
-        for i in range(0, len(remaining), CHUNK_SIZE):
-            chunk = remaining[i : i + CHUNK_SIZE]
-            with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
-                analyses = list(tqdm(executor.map(analyze_video, chunk), total=len(chunk), desc=f"Stage 1 chunk {i // CHUNK_SIZE + 1}"))
-            df_videos = pl.concat([df_videos, pl.DataFrame(analyses)])
-            df_videos.write_parquet(filter_parquet)
-    print(f"{len(df_videos)} analyzed videos ready in {filter_parquet.name}")
+    analyze_videos(videos, filter_parquet)
+
+

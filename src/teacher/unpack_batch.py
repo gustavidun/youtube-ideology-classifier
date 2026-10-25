@@ -1,5 +1,5 @@
 import polars as pl
-from config import OUT_DIR, SLANTS_TRAIN
+from src.config import OUT_DIR, SLANTS_TRAIN
 
 
 def unpack_batch_results():

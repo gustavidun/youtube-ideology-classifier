@@ -1,6 +1,6 @@
 import polars as pl
 from datasets import Dataset
-from config import OUT_DIR
+from src.config import OUT_DIR
 
 CONFIDENCE_THRESHOLD = 0.3
 TEST_SIZE = 0.1
