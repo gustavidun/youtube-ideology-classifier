@@ -161,7 +161,7 @@ def score_pair(pair: tuple, questions = Q_ALIGNMENT):
         "slant_b": video_b.get("slant"),
     }
 
-    if questions == Q_ALIGNMENT:
+    if questions == Q_ALIGNMENT or questions == Q_ABSOLUTE:
         for q in ans.keys():
             output[q] = round((ans[q]["score"] - 2.0) / 2.0, 4)
             output[f"{q}_confidence"] = round(ans[q].get("confidence", 0.0), 4)
@@ -170,12 +170,6 @@ def score_pair(pair: tuple, questions = Q_ALIGNMENT):
     if questions == Q_RANKING:
         for q in ans.keys():
             output[q] = ans[q]["noul"]
-            output[f"{q}_confidence"] = round(ans[q].get("confidence", 0.0), 4)
-            output[f"{q}_probabilities"] = _extract_probs(ans[q])
-    
-    if questions == Q_ABSOLUTE:
-        for q in ans.keys():
-            output[q] = round((ans[q]["score"] - 2.0) / 2.0, 4)
             output[f"{q}_confidence"] = round(ans[q].get("confidence", 0.0), 4)
             output[f"{q}_probabilities"] = _extract_probs(ans[q])
 

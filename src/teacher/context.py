@@ -29,7 +29,7 @@ VIDEO_ANALYSIS_PROMPT = """Analyze a single YouTube video to assess its politica
   * Detected Stances: posture (supportive, critical, satirical, oppositional) toward those targets.
 - Assign political_saliency [0.0 to 1.0]:
   * 1.0: Highly explicit political commentary.
-  * 0.5: Moderate or latent political commentary (retail PR, partisan guests, cultural grievances).
+  * 0.5: Moderate or latent political commentary.
   * 0.0: Completely devoid of political commentary or ideological signaling.
 """
 
@@ -100,7 +100,6 @@ if __name__ == "__main__":
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     filter_parquet = OUT_DIR / "context.parquet"
 
-    # Stage 1: Analyze videos (with chunked disk writes and auto-resume)
     videos = (
         pl.read_csv(SLANTS_TRAIN, ignore_errors=True)
         .select(["id", "title", "channel", "description", "tags", "slant"])
