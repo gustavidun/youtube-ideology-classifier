@@ -2,7 +2,6 @@ import itertools
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
-from dotenv import load_dotenv
 import httpx
 import polars as pl
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -10,9 +9,14 @@ from tqdm import tqdm
 from pathlib import Path
 from functools import partial
 
-from src.config import OUT_DIR, DECISION_MODEL, NUM_WORKERS_DECISION
+from typing import Literal
+
+from src.config import OUT_DIR, ROOT
 from src.teacher.context import VideoAnalysis
-from src.teacher import decision_client, decision_endpoint
+from src.teacher import DECISION_MODEL
+
+LOCAL_SERVER = True
+NUM_WORKERS_DECISION = 64 if LOCAL_SERVER else 40
 
 CHUNK_SIZE = 1000
 PAIRS_PER_VIDEO = 5
@@ -104,11 +108,81 @@ Q_ABSOLUTE = {
     }
 }
 
-
 def _extract_probs(question_data: dict) -> dict[str, float]:
     probs = question_data.get("probabilities", {})
     return {str(k): round(float(probs.get(str(k), probs.get(k, 0.0))), 4) for k in range(5)}
 
+def _local_api_inference(state : str, questions : dict, client) -> dict:
+    ans = {}
+    usage = {"prompt_tokens": 0, "completion_tokens": 0}
+
+    for q_key, q_data in questions.items():
+        # local Jev needs the scoring criteria baked into the question text if we aren't using "choice"
+        criteria_text = "\n".join(q_data.get("criteria", []))
+        full_question = f"{q_data['instructions']}\n{criteria_text}".strip()
+
+        payload = {
+            "kind": q_data["type"],
+            "state": state,
+            "question": full_question
+        }
+
+        resp = client.post("/decide", json=payload)
+        resp.raise_for_status()
+        res_data = resp.json()
+
+        if "usage" in res_data:
+            usage["prompt_tokens"] += res_data["usage"].get("prompt_tokens", 0)
+            usage["completion_tokens"] += res_data["usage"].get("completion_tokens", 0)
+
+        probs_dict = dict(zip(res_data["options"], res_data["probabilities"]))
+        confidence = max(res_data["probabilities"])
+
+        if q_data["type"] == "score":
+            ans[q_key] = {
+                "score": res_data.get("score", sum(i * p for i, p in enumerate(res_data["probabilities"]))),
+                "confidence": confidence,
+                "probabilities": probs_dict
+            }
+        elif q_data["type"] == "noul":
+            ans[q_key] = {
+                "noul": res_data.get("choice") == "true",
+                "confidence": confidence,
+                "probabilities": probs_dict  
+            }
+
+    return ans, usage 
+
+def _remote_api_inference(state : str, questions : dict, client) -> dict:
+    payload = {
+        "model": DECISION_MODEL,
+        "state": state,
+        "questions": questions,
+    }
+    resp = client.post("/decisions", json=payload)
+    resp.raise_for_status()
+    res_data = resp.json()
+    return res_data.get("answers"), res_data.get("usage")
+
+def create_decision_client():
+    if LOCAL_SERVER:
+        limits = httpx.Limits(
+            max_connections=256,
+            max_keepalive_connections=128,
+        )
+        decision_client = httpx.Client(
+            base_url="http://localhost:8000/v1",
+            headers={"Authorization": "Bearer EMPTY"},
+            timeout=300.0,
+            limits=limits,
+        )
+    else:
+        decision_client = httpx.Client(
+            base_url="https://openrouter.ai/api/alpha",
+            headers={"Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}"},
+            timeout=30.0,
+        )
+    return decision_client
 
 @retry(
     stop=stop_after_attempt(5),
@@ -116,7 +190,7 @@ def _extract_probs(question_data: dict) -> dict[str, float]:
     retry=retry_if_exception_type(httpx.HTTPError),
     reraise=True,
 )
-def score_pair(pair: tuple, questions = Q_ALIGNMENT, client=decision_client):
+def score_pair(pair: tuple, client, questions = Q_ALIGNMENT):
     (video_a, analysis_a), (video_b, analysis_b) = pair
 
     state = f"""
@@ -130,45 +204,11 @@ def score_pair(pair: tuple, questions = Q_ALIGNMENT, client=decision_client):
     Title: {video_b['title']}
     {f'Analysis: {analysis_b.model_dump_json()}' if analysis_b else ''}
     """
-    ans = {}
-    usage = {"prompt_tokens": 0, "completion_tokens": 0}
 
-    for q_key, q_data in questions.items():
-        # Jev needs the scoring criteria baked into the question text if we aren't using "choice"
-        criteria_text = "\n".join(q_data.get("criteria", []))
-        full_question = f"{q_data['instructions']}\n{criteria_text}".strip()
-
-        payload = {
-            "kind": q_data["type"],  # 'score' or 'noul'
-            "state": state,
-            "question": full_question
-        }
-
-        # 3. Hit the custom endpoint injected by serve_decide.py
-        resp = client.post(decision_endpoint, json=payload)
-        resp.raise_for_status()
-        r_data = resp.json()
-
-        if "usage" in r_data:
-            usage["prompt_tokens"] += r_data["usage"].get("prompt_tokens", 0)
-            usage["completion_tokens"] += r_data["usage"].get("completion_tokens", 0)
-
-        # 4. Map the serve_decide.py lists back into the dict format OpenRouter used
-        probs_dict = dict(zip(r_data["options"], r_data["probabilities"]))
-        confidence = max(r_data["probabilities"])
-
-        if q_data["type"] == "score":
-            ans[q_key] = {
-                "score": r_data.get("score", sum(i * p for i, p in enumerate(r_data["probabilities"]))),
-                "confidence": confidence,
-                "probabilities": probs_dict
-            }
-        elif q_data["type"] == "noul":
-            ans[q_key] = {
-                "noul": r_data.get("choice") == "true",
-                "confidence": confidence,
-                "probabilities": probs_dict
-            }
+    if LOCAL_SERVER:
+        ans, usage = _local_api_inference(state, questions, client)
+    else:
+        ans, usage = _remote_api_inference(state, questions, client)
 
     output = {
         "id_a": video_a.get("id"),
@@ -208,7 +248,7 @@ def generate_pairs(videos : list[dict], pairs_per_video = PAIRS_PER_VIDEO) -> li
         for pair in itertools.pairwise(random.sample(videos, len(videos)))
     ]    
 
-def score_pairs(pairs : list[tuple[dict, dict|None]], dest: Path, questions=Q_ALIGNMENT):
+def score_pairs(pairs : list[tuple[dict, dict|None]], dest: Path, client, questions=Q_ALIGNMENT):
     df_pairs = pl.read_parquet(dest) if dest.exists() else pl.DataFrame()
     start_idx = len(df_pairs)
     remaining_pairs = pairs[start_idx:]
@@ -218,7 +258,7 @@ def score_pairs(pairs : list[tuple[dict, dict|None]], dest: Path, questions=Q_AL
             chunk = remaining_pairs[i : i + CHUNK_SIZE]
             with ThreadPoolExecutor(max_workers=NUM_WORKERS_DECISION) as executor:
                 scored = []
-                score_pair_args = partial(score_pair, questions=questions)
+                score_pair_args = partial(score_pair, questions=questions, client=client)
                 for res in executor.map(score_pair_args, chunk):
                     scored.append(res)
                     pbar.update(1)
@@ -228,15 +268,4 @@ def score_pairs(pairs : list[tuple[dict, dict|None]], dest: Path, questions=Q_AL
 
     print(f"\nDone! Saved {len(df_pairs)} pairs to {dest.name}")
 
-if __name__ == "__main__":
-    context = OUT_DIR / "context.parquet"
-    pairwise_parquet = OUT_DIR / "pair_similarity.parquet"
 
-    df_videos = pl.read_parquet(context)
-    political_records = df_videos.filter(pl.col("political_saliency") > 0).to_dicts() # filter out completely non-political videos
-    print(f"Loaded {len(political_records)} political videos from {context.name}.")
-
-    political = [(v, VideoAnalysis.model_validate_json(v["analysis_json"])) for v in political_records]
-
-    pairs = generate_pairs(political)
-    score_pairs(pairs, pairwise_parquet)

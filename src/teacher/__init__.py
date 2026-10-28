@@ -1,36 +1,18 @@
-from openai import OpenAI
-import os
+from typing import Literal
 from dotenv import load_dotenv
-import httpx
 
-from src.config import LOCAL_SERVER, ROOT
+from src.config import ROOT
 
 load_dotenv(ROOT / ".env", override=True)
 
-if LOCAL_SERVER == False:
-    context_client = OpenAI(
-        api_key=os.getenv("OPENAI_API_KEY")
-    )
-    decision_client = httpx.Client(
-        base_url="https://openrouter.ai/api/alpha",
-        headers={"Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}"},
-        timeout=30.0,
-    )
-    decision_endpoint = "/decisions"
-else:
-    context_client = OpenAI(
-        base_url="http://localhost:8000/v1",
-        api_key="EMPTY"
-    )
-    limits = httpx.Limits(
-        max_connections=256,
-        max_keepalive_connections=128 
-    )
+LOCAL_SERVER = True
 
-    decision_client = httpx.Client(
-        base_url="http://localhost:8000/v1",
-        headers={"Authorization": "Bearer EMPTY"},
-        timeout=300.0,
-        limits=limits
-    )
-    decision_endpoint = "/decide"
+D_MODELS = Literal["typesafe/jev-1.14", "autotrust/JEV-27B"]
+C_MODELS = Literal["gpt-4o-mini", "Qwen/Qwen3-8B"]
+
+DECISION_MODEL: D_MODELS = "typesafe/jev-1.14"
+CONTEXT_MODEL: C_MODELS = "gpt-4o-mini"
+
+def get_model_name(name: str) -> str:
+    return name.split("/")[-1].lower()
+

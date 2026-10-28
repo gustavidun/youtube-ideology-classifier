@@ -1,14 +1,23 @@
+import os
+from typing import Literal
 from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm
-import polars as pl
-from openai import OpenAI
-from pydantic import BaseModel, Field
-from pathlib import Path
 from functools import partial
+from pathlib import Path
+from dotenv import load_dotenv
+from openai import OpenAI
+import polars as pl
+from pydantic import BaseModel, Field
+from tqdm import tqdm
 
-from src.config import OUT_DIR, SLANTS_TRAIN, CONTEXT_MODEL, NUM_WORKERS_CONTEXT
-from src.teacher import context_client
+from src.config import OUT_DIR, ROOT, SLANTS_TRAIN
+from src.teacher import CONTEXT_MODEL
 
+load_dotenv(ROOT / ".env", override=True)
+
+LOCAL_SERVER = True
+NUM_WORKERS_CONTEXT = 128 if LOCAL_SERVER else 40
+
+CHUNK_SIZE = 5000
 VIDEO_ANALYSIS_PROMPT = """Analyze a single YouTube video to assess its political character.
 
 - Use the channel context to establish the creator's ideological baseline.
@@ -33,11 +42,22 @@ class VideoAnalysis(BaseModel):
     political_saliency_reasoning: str = Field(description="Brief reasoning on video's political salience.")
     political_saliency: float = Field(description="Political salience of this video (0.0 = apolitical, 1.0 = explicit political commentary)", ge=0.0, le=1.0)
 
+def create_context_client():
+    if LOCAL_SERVER:
+        return OpenAI(
+            base_url="http://localhost:8000/v1",
+            api_key="EMPTY",
+        )
+    else:
+        return OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+        )
+
 def query_model(
         system_prompt: str,
         user_prompt: str,
         response_format,
-        client: OpenAI = context_client,
+        client: OpenAI,
         model=CONTEXT_MODEL
 ):
     response = client.beta.chat.completions.parse(
@@ -51,7 +71,7 @@ def query_model(
     )
     return response.choices[0].message.parsed, response.usage
 
-def analyze_video(video_data: dict, client: OpenAI = context_client):
+def analyze_video(video_data: dict, client: OpenAI):
     user_prompt = f"""
     Channel: {video_data['channel']}
     Title: {video_data['title']}
@@ -75,7 +95,7 @@ def analyze_video(video_data: dict, client: OpenAI = context_client):
         "completion_tokens": usage.completion_tokens,
     }
 
-def analyze_videos(videos : list[dict], dest : Path, client : OpenAI = context_client):
+def analyze_videos(videos : list[dict], dest : Path, client : OpenAI):
     """Analyze videos in batches and save to dest."""
     df_videos = pl.read_parquet(dest) if dest.exists() else pl.DataFrame()
     if len(df_videos) < len(videos):
@@ -88,21 +108,15 @@ def analyze_videos(videos : list[dict], dest : Path, client : OpenAI = context_c
             df_videos = pl.concat([df_videos, pl.DataFrame(analyses)])
             df_videos.write_parquet(dest)
     print(f"{len(df_videos)} analyzed videos ready in {dest.name}")
-
-CHUNK_SIZE = 5000
-
-if __name__ == "__main__":
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    filter_parquet = OUT_DIR / "context.parquet"
-
-    videos = (
-        pl.read_csv(SLANTS_TRAIN, ignore_errors=True)
-        .select(["id", "title", "channel", "description", "tags", "slant"])
-        .filter(pl.col("id").str.contains(r"^[A-Za-z0-9_-]{11}$"))
-        .unique(subset=["id"], keep="first")
-        .to_dicts()
-    )
-
-    analyze_videos(videos, filter_parquet)
-
-
+    num_workers = 128 if local else 40
+    df_videos = pl.read_parquet(dest) if dest.exists() else pl.DataFrame()
+    if len(df_videos) < len(videos):
+        remaining = videos[len(df_videos):]
+        for i in range(0, len(remaining), CHUNK_SIZE):
+            chunk = remaining[i : i + CHUNK_SIZE]
+            analyze_partial = partial(analyze_video, client=client, model=model)
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                analyses = list(tqdm(executor.map(analyze_partial, chunk), total=len(chunk), desc=f"Stage 1 chunk {i // CHUNK_SIZE + 1}"))
+            df_videos = pl.concat([df_videos, pl.DataFrame(analyses)])
+            df_videos.write_parquet(dest)
+    print(f"{len(df_videos)} analyzed videos ready in {dest.name}")
