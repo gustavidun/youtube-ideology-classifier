@@ -6,7 +6,7 @@ pandas
 python-dotenv
 httpx
 tenacity
-transformers[torch]
+transformers
 flash-attn
 uv
 umap-learn
