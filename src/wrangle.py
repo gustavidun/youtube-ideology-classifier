@@ -20,23 +20,7 @@ def process_and_split(df: pl.DataFrame, name: str):
     
     print(f"{name.capitalize()}: {len(split_dataset['train'])} train, {len(split_dataset['test'])} test")
 
-if __name__ == "__main__":
-    context = pl.read_parquet(OUT_DIR / "context.parquet")
-    pairs = pl.read_parquet(OUT_DIR / "pair_similarity.parquet")
-
-    # concatenate metadata
-    context = context.with_columns(
-        assembled_text=pl.concat_str(
-            [
-                pl.lit("Channel: "), pl.col("channel"), pl.lit("\n"),
-                pl.lit("Title: "), pl.col("title"), pl.lit("\n"),
-                pl.lit("Description: "), pl.col("description"), pl.lit("\n"),
-                pl.lit("Tags: "), pl.col("tags")
-            ]
-        )
-    )
-
-    # join
+def wrangle_pairs(pairs: pl.DataFrame, context: pl.DataFrame):
     pairs = pairs.join(
         context.select(["id", "assembled_text"]), 
         left_on="id_a", 
@@ -50,27 +34,68 @@ if __name__ == "__main__":
         right_on="id", 
         how="left"
     ).rename({"assembled_text": "sentence2"})
+    return pairs
 
-    # filter nulls and scores with low confidence
+def filter_pairs(
+    pairs: pl.DataFrame,
+    score_cols: list = ["economic_alignment", "galtan_alignment", "overall_ideological_alignment"],
+    confidence_cols: list = ["economic_confidence", "galtan_confidence", "overall_ideological_confidence"]
+):
+    if confidence_cols:
+        for col in confidence_cols:
+            pairs = pairs.filter(pl.col(col) >= CONFIDENCE_THRESHOLD)
+
     economic = (
-        pairs.filter(pl.col("economic_confidence") >= CONFIDENCE_THRESHOLD)
-        .select(["sentence1", "sentence2", "economic_alignment"])
+        pairs
+        .select(["sentence1", "sentence2", score_cols[0]])
         .drop_nulls()
-        .rename({"economic_alignment": "score"})
+        .rename({score_cols[0]: "score"})
     )
     galtan = (
-        pairs.filter(pl.col("galtan_confidence") >= CONFIDENCE_THRESHOLD)
-        .select(["sentence1", "sentence2", "galtan_alignment"])
+        pairs
+        .select(["sentence1", "sentence2", score_cols[1]])
         .drop_nulls()
-        .rename({"galtan_alignment": "score"})
+        .rename({score_cols[1]: "score"})
     )
     overall = (
-        pairs.filter(pl.col("overall_ideological_confidence") >= CONFIDENCE_THRESHOLD)
-        .select(["sentence1", "sentence2", "overall_ideological_alignment"])
+        pairs
+        .select(["sentence1", "sentence2", score_cols[2]])
         .drop_nulls()
-        .rename({"overall_ideological_alignment": "score"})
+        .rename({score_cols[2]: "score"})
+    )
+    return economic, galtan, overall
+
+if __name__ == "__main__":
+    context = pl.read_parquet(OUT_DIR / "context.parquet")
+    pairs = pl.read_parquet(OUT_DIR / "pair_similarity.parquet")
+    pairs_ranked = pl.read_parquet(OUT_DIR / "pair_ranked.parquet")
+
+    # concatenate metadata
+    context = context.with_columns(
+        assembled_text=pl.concat_str(
+            [
+                pl.lit("Channel: "), pl.col("channel"), pl.lit("\n"),
+                pl.lit("Title: "), pl.col("title"), pl.lit("\n"),
+                pl.lit("Description: "), pl.col("description"), pl.lit("\n"),
+                pl.lit("Tags: "), pl.col("tags")
+            ]
+        )
     )
 
-    process_and_split(economic, "economic")
-    process_and_split(galtan, "galtan")
-    process_and_split(overall, "overall")
+    pairs = wrangle_pairs(pairs, context)
+    pairs_ranked = wrangle_pairs(pairs_ranked, context)
+
+    # filter nulls and scores with low confidence
+    economic, galtan, overall = filter_pairs(pairs)
+    economic_ranked, galtan_ranked, overall_ranked = filter_pairs(
+        pairs_ranked,
+        score_cols=["is_more_right_leaning_economic", "is_more_right_leaning_cultural", "is_more_right_leaning_overall"],
+        confidence_cols=[] #there isnt a separate confidence score for nouls
+    )
+
+    #process_and_split(economic, "economic")
+    #process_and_split(galtan, "galtan")
+    #process_and_split(overall, "overall")
+    process_and_split(economic_ranked, "economic_ranked")
+    process_and_split(galtan_ranked, "galtan_ranked")
+    process_and_split(overall_ranked, "overall_ranked")
