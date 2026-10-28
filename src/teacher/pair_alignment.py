@@ -10,21 +10,12 @@ from tqdm import tqdm
 from pathlib import Path
 from functools import partial
 
-from src.config import OUT_DIR, ROOT
+from src.config import OUT_DIR, DECISION_MODEL, NUM_WORKERS_DECISION
 from src.teacher.context import VideoAnalysis
+from src.teacher import decision_client, decision_endpoint
 
-load_dotenv(ROOT / ".env", override=True)
-
-MODEL_NAME = "typesafe/jev-1.14"
-NUM_WORKERS = 40
 CHUNK_SIZE = 1000
 PAIRS_PER_VIDEO = 5
-
-http_client = httpx.Client(
-    base_url="https://openrouter.ai/api/alpha",
-    headers={"Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}"},
-    timeout=30.0,
-)
 
 Q_ALIGNMENT = {
     "economic_alignment": {
@@ -125,7 +116,7 @@ def _extract_probs(question_data: dict) -> dict[str, float]:
     retry=retry_if_exception_type(httpx.HTTPError),
     reraise=True,
 )
-def score_pair(pair: tuple, questions = Q_ALIGNMENT):
+def score_pair(pair: tuple, questions = Q_ALIGNMENT, client=decision_client):
     (video_a, analysis_a), (video_b, analysis_b) = pair
 
     state = f"""
@@ -139,16 +130,45 @@ def score_pair(pair: tuple, questions = Q_ALIGNMENT):
     Title: {video_b['title']}
     {f'Analysis: {analysis_b.model_dump_json()}' if analysis_b else ''}
     """
-    payload = {
-        "model": MODEL_NAME,
-        "state": state,
-        "questions": questions,
-    }
-    resp = http_client.post("/decisions", json=payload)
-    resp.raise_for_status()
-    res_data = resp.json()
-    ans = res_data.get("answers")
-    usage = res_data.get("usage")
+    ans = {}
+    usage = {"prompt_tokens": 0, "completion_tokens": 0}
+
+    for q_key, q_data in questions.items():
+        # Jev needs the scoring criteria baked into the question text if we aren't using "choice"
+        criteria_text = "\n".join(q_data.get("criteria", []))
+        full_question = f"{q_data['instructions']}\n{criteria_text}".strip()
+
+        payload = {
+            "kind": q_data["type"],  # 'score' or 'noul'
+            "state": state,
+            "question": full_question
+        }
+
+        # 3. Hit the custom endpoint injected by serve_decide.py
+        resp = client.post(decision_endpoint, json=payload)
+        resp.raise_for_status()
+        r_data = resp.json()
+
+        if "usage" in r_data:
+            usage["prompt_tokens"] += r_data["usage"].get("prompt_tokens", 0)
+            usage["completion_tokens"] += r_data["usage"].get("completion_tokens", 0)
+
+        # 4. Map the serve_decide.py lists back into the dict format OpenRouter used
+        probs_dict = dict(zip(r_data["options"], r_data["probabilities"]))
+        confidence = max(r_data["probabilities"])
+
+        if q_data["type"] == "score":
+            ans[q_key] = {
+                "score": r_data.get("score", sum(i * p for i, p in enumerate(r_data["probabilities"]))),
+                "confidence": confidence,
+                "probabilities": probs_dict
+            }
+        elif q_data["type"] == "noul":
+            ans[q_key] = {
+                "noul": r_data.get("choice") == "true",
+                "confidence": confidence,
+                "probabilities": probs_dict
+            }
 
     output = {
         "id_a": video_a.get("id"),
@@ -193,10 +213,10 @@ def score_pairs(pairs : list[tuple[dict, dict|None]], dest: Path, questions=Q_AL
     start_idx = len(df_pairs)
     remaining_pairs = pairs[start_idx:]
 
-    with tqdm(total=len(pairs), initial=start_idx, desc=f"Scoring pairs ({MODEL_NAME})", unit="pair") as pbar:
+    with tqdm(total=len(pairs), initial=start_idx, desc=f"Scoring pairs ({DECISION_MODEL})", unit="pair") as pbar:
         for i in range(0, len(remaining_pairs), CHUNK_SIZE):
             chunk = remaining_pairs[i : i + CHUNK_SIZE]
-            with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
+            with ThreadPoolExecutor(max_workers=NUM_WORKERS_DECISION) as executor:
                 scored = []
                 score_pair_args = partial(score_pair, questions=questions)
                 for res in executor.map(score_pair_args, chunk):

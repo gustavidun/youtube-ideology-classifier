@@ -3,27 +3,31 @@
 import polars as pl
 from pathlib import Path
 
-from src.teacher.pair_alignment import generate_pairs, score_pairs, score_pair, Q_ALIGNMENT, Q_RANKING, Q_ABSOLUTE
+from src.teacher.pair_alignment import generate_pairs, score_pairs, Q_ALIGNMENT, Q_RANKING, Q_ABSOLUTE
 from src.teacher.context import analyze_videos, VideoAnalysis
-from src.config import DATA_DIR
+from src.config import DATA_DIR, get_model_name, CONTEXT_MODEL, DECISION_MODEL
 
 PAIRS_PER_VIDEO = 5
 EVAL_PATH = DATA_DIR / "out" / "eval"
-CONTEXT_DEST = EVAL_PATH / "human_metadata_with_context.parquet"
+model_names = get_model_name(CONTEXT_MODEL) + "-" + get_model_name(DECISION_MODEL)
+
+CONTEXT_DEST = EVAL_PATH / f"{model_names}" / f"human_metadata_with_context.parquet"
+print("Metadata dest: ", CONTEXT_DEST)
 
 CONDITIONS = {
     "context": {
         "ranking": Q_RANKING,
-        #"absolute": Q_ABSOLUTE,
-        #"alignment": Q_ALIGNMENT,
+        "absolute": Q_ABSOLUTE,
+        "alignment": Q_ALIGNMENT,
     },
     "no_context": {
         "ranking": Q_RANKING,
-        #"absolute": Q_ABSOLUTE,
-        #"alignment": Q_ALIGNMENT,
+        "absolute": Q_ABSOLUTE,
+        "alignment": Q_ALIGNMENT,
     }
 }
 
+CONTEXT_DEST.parent.mkdir(exist_ok=True)
 human_metadata = pl.read_parquet(DATA_DIR / "human_labels" / "vid_metadata.parquet")
 
 def generate_context():
@@ -37,9 +41,9 @@ if __name__ == "__main__":
         context = generate_context()
         context = [(v, VideoAnalysis.model_validate_json(v["analysis_json"])) for v in context.to_dicts()]
         pairs = generate_pairs(context, PAIRS_PER_VIDEO)
-        score_pairs(pairs, Path(EVAL_PATH / f"context_{cond}.parquet"), CONDITIONS["context"][cond])
+        score_pairs(pairs, Path(CONTEXT_DEST.parent / f"context_{cond}.parquet"), CONDITIONS["context"][cond])
     
     for cond in CONDITIONS["no_context"].keys():
         metadata = [(v, None) for v in human_metadata.to_dicts()]
         pairs = generate_pairs(metadata, PAIRS_PER_VIDEO)
-        score_pairs(pairs, Path(EVAL_PATH / f"no_context_{cond}.parquet"), CONDITIONS["no_context"][cond])
+        score_pairs(pairs, Path(CONTEXT_DEST.parent / f"no_context_{cond}.parquet"), CONDITIONS["no_context"][cond])
