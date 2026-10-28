@@ -1,0 +1,12 @@
+python3 JEV-27B/serve_decide.py --model JEV-27B \
+    --served-model-name autotrust/JEV-27B \
+    --enable-lora \
+    --max-lora-rank 32 \
+    --lora-modules jev-decision=JEV-27B/adapter_vllm \
+    --logprobs-mode processed_logprobs \
+    --max-model-len 4096 \
+    --max-num-seqs 128 \
+    --max-num-batched-tokens 16384 \
+    --mamba-cache-mode align \
+    --enable-prefix-caching \
+    --gpu-memory-utilization 0.85
