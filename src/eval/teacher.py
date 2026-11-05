@@ -13,7 +13,7 @@ PAIRS_PER_VIDEO = 5
 EVAL_PATH = DATA_DIR / "out" / "eval"
 model_names = get_model_name(CONTEXT_MODEL) + "-" + get_model_name(DECISION_MODEL)
 
-CONTEXT_DEST = EVAL_PATH / f"{model_names}" / f"human_metadata_with_context.parquet"
+CONTEXT_DEST = EVAL_PATH / f"{model_names}" / "teacher" / f"human_metadata_with_context.parquet"
 print("Metadata dest: ", CONTEXT_DEST)
 
 CONDITIONS = {
