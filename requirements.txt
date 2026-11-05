@@ -12,3 +12,5 @@ uv
 umap-learn
 statsmodels
 wordcloud
+youtube-transcript-api
+youtube-comment-downloader
