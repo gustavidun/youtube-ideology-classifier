@@ -1,0 +1,25 @@
+Model,Method,Dimension,Context,Setup,Accuracy (%),Pairs
+gpt-4o-mini-jev,Ranking (Elo),Overall,With Context,gpt-4o-mini-jev  |  Ranking (Overall),70.21,4139
+gpt-4o-mini-jev,Ranking (Elo),Economic,With Context,gpt-4o-mini-jev  |  Ranking (Economic),70.02,4139
+gpt-4o-mini-jev,Ranking (Elo),Cultural,With Context,gpt-4o-mini-jev  |  Ranking (Cultural),69.56,4139
+gpt-4o-mini-jev,Ranking (Elo),Overall,No Context,gpt-4o-mini-jev  |  Ranking (Overall),68.23,4139
+gpt-4o-mini-jev,Ranking (Elo),Economic,No Context,gpt-4o-mini-jev  |  Ranking (Economic),67.77,4139
+gpt-4o-mini-jev,Ranking (Elo),Cultural,No Context,gpt-4o-mini-jev  |  Ranking (Cultural),67.96,4139
+gpt-4o-mini-jev,Absolute (Direct),Overall,With Context,gpt-4o-mini-jev  |  Absolute (Overall),69.12,4139
+gpt-4o-mini-jev,Absolute (Direct),Economic,With Context,gpt-4o-mini-jev  |  Absolute (Economic),67.34,4139
+gpt-4o-mini-jev,Absolute (Direct),Cultural,With Context,gpt-4o-mini-jev  |  Absolute (Cultural),69.22,4139
+gpt-4o-mini-jev,Absolute (Direct),Overall,No Context,gpt-4o-mini-jev  |  Absolute (Overall),69.8,4139
+gpt-4o-mini-jev,Absolute (Direct),Economic,No Context,gpt-4o-mini-jev  |  Absolute (Economic),68.66,4139
+gpt-4o-mini-jev,Absolute (Direct),Cultural,No Context,gpt-4o-mini-jev  |  Absolute (Cultural),69.39,4139
+qwen3-8b-jev-27b,Ranking (Elo),Overall,With Context,qwen3-8b-jev-27b  |  Ranking (Overall),65.67,4139
+qwen3-8b-jev-27b,Ranking (Elo),Economic,With Context,qwen3-8b-jev-27b  |  Ranking (Economic),62.96,4139
+qwen3-8b-jev-27b,Ranking (Elo),Cultural,With Context,qwen3-8b-jev-27b  |  Ranking (Cultural),63.01,4139
+qwen3-8b-jev-27b,Ranking (Elo),Overall,No Context,qwen3-8b-jev-27b  |  Ranking (Overall),66.25,4139
+qwen3-8b-jev-27b,Ranking (Elo),Economic,No Context,qwen3-8b-jev-27b  |  Ranking (Economic),63.95,4139
+qwen3-8b-jev-27b,Ranking (Elo),Cultural,No Context,qwen3-8b-jev-27b  |  Ranking (Cultural),64.32,4139
+qwen3-8b-jev-27b,Absolute (Direct),Overall,With Context,qwen3-8b-jev-27b  |  Absolute (Overall),65.31,4139
+qwen3-8b-jev-27b,Absolute (Direct),Economic,With Context,qwen3-8b-jev-27b  |  Absolute (Economic),63.69,4139
+qwen3-8b-jev-27b,Absolute (Direct),Cultural,With Context,qwen3-8b-jev-27b  |  Absolute (Cultural),64.65,4139
+qwen3-8b-jev-27b,Absolute (Direct),Overall,No Context,qwen3-8b-jev-27b  |  Absolute (Overall),67.02,4139
+qwen3-8b-jev-27b,Absolute (Direct),Economic,No Context,qwen3-8b-jev-27b  |  Absolute (Economic),63.69,4139
+qwen3-8b-jev-27b,Absolute (Direct),Cultural,No Context,qwen3-8b-jev-27b  |  Absolute (Cultural),66.13,4139
