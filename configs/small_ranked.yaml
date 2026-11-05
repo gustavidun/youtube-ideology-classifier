@@ -4,7 +4,7 @@ tasks:
   - "galtan_ranked"
 
 training_args:
-  output_dir: "models/political-embedder-small"
+  output_dir: "models/mpnet-ranked"
   num_train_epochs: 1
   learning_rate: 2.0e-5
   per_device_train_batch_size: 64
