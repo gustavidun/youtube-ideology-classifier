@@ -12,4 +12,4 @@ MODEL_DIR = ROOT / "models"
 
 load_dotenv(ROOT / ".env")
 
-YT_API_KEYS = json.loads(os.getenv("YT_API_KEYS"))
+YT_API_KEYS = json.loads(os.getenv("YT_API_KEYS", "[]"))

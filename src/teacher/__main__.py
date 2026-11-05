@@ -14,7 +14,7 @@ def main():
     parser.add_argument("--context_path", default="context.parquet", required=False)
     parser.add_argument("--out_path", default="pair_similarity.parquet", required=False)
     parser.add_argument("--overwrite", default=False, action=argparse.BooleanOptionalAction)
-    parser.add_argument("--context_model", default="Qwen/Qwen3-8B", required=False)
+    parser.add_argument("--context_model", default=CONTEXT_MODEL, required=False)
     parser.add_argument("--decision_model", default="autotrust/JEV-27B", required=False)
     parser.add_argument("--local", action=argparse.BooleanOptionalAction, default=False)
     
@@ -46,7 +46,7 @@ def main():
             .unique(subset=["id"], keep="first")
             .to_dicts()
         )
-        pc.analyze_videos(videos, filter_parquet, context_client)
+        pc.analyze_videos(videos, filter_parquet, context_client, model=args_cli.context_model)
 
     elif args_cli.mode == "pairs":
         context = OUT_DIR / args_cli.context_path

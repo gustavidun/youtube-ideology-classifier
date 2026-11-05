@@ -10,12 +10,12 @@ from pydantic import BaseModel, Field
 from tqdm import tqdm
 
 from src.config import OUT_DIR, ROOT, SLANTS_TRAIN
-from src.teacher import CONTEXT_MODEL
+from src.teacher import CONTEXT_MODEL, MODEL_EXTRA_ARGS
 
 load_dotenv(ROOT / ".env", override=True)
 
 LOCAL_SERVER = True
-NUM_WORKERS_CONTEXT = 128 if LOCAL_SERVER else 40
+NUM_WORKERS_CONTEXT = 10 if LOCAL_SERVER else 40
 
 CHUNK_SIZE = 5000
 VIDEO_ANALYSIS_PROMPT = """Analyze a single YouTube video to assess its political character.
@@ -58,20 +58,31 @@ def query_model(
         user_prompt: str,
         response_format,
         client: OpenAI,
-        model=CONTEXT_MODEL
+        model: str = CONTEXT_MODEL,
+        extra_args: dict | None = None,
 ):
+    api_model = model
+    if LOCAL_SERVER and "qwen" in model.lower():
+        api_model = "qwen"
+
+    # Fetch model-specific extra arguments (e.g. chat_template_kwargs) from __init__.py
+    model_kwargs = dict(MODEL_EXTRA_ARGS.get(model, {}))
+    if extra_args:
+        model_kwargs.update(extra_args)
+
     response = client.beta.chat.completions.parse(
-        model=model,
+        model=api_model,
         temperature=0.1,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         response_format=response_format,
+        **model_kwargs,
     )
     return response.choices[0].message.parsed, response.usage
 
-def analyze_video(video_data: dict, client: OpenAI):
+def analyze_video(video_data: dict, client: OpenAI, model: str = CONTEXT_MODEL):
     user_prompt = f"""
     Channel: {video_data['channel']}
     Title: {video_data['title']}
@@ -83,6 +94,7 @@ def analyze_video(video_data: dict, client: OpenAI):
         user_prompt=user_prompt,
         response_format=VideoAnalysis,
         client=client,
+        model=model,
     )
     return {
         "id": video_data.get("id"),
@@ -95,27 +107,16 @@ def analyze_video(video_data: dict, client: OpenAI):
         "completion_tokens": usage.completion_tokens,
     }
 
-def analyze_videos(videos : list[dict], dest : Path, client : OpenAI):
+def analyze_videos(videos : list[dict], dest : Path, client : OpenAI, model: str = CONTEXT_MODEL):
     """Analyze videos in batches and save to dest."""
-    df_videos = pl.read_parquet(dest) if dest.exists() else pl.DataFrame()
-    if len(df_videos) < len(videos):
-        remaining = videos[len(df_videos):]
-        for i in range(0, len(remaining), CHUNK_SIZE):
-            chunk = remaining[i : i + CHUNK_SIZE]
-            analyze_partial = partial(analyze_video, client=client)
-            with ThreadPoolExecutor(max_workers=NUM_WORKERS_CONTEXT) as executor:
-                analyses = list(tqdm(executor.map(analyze_partial, chunk), total=len(chunk), desc=f"Stage 1 chunk {i // CHUNK_SIZE + 1}"))
-            df_videos = pl.concat([df_videos, pl.DataFrame(analyses)])
-            df_videos.write_parquet(dest)
-    print(f"{len(df_videos)} analyzed videos ready in {dest.name}")
-    num_workers = 128 if local else 40
+    dest.parent.mkdir(parents=True, exist_ok=True)
     df_videos = pl.read_parquet(dest) if dest.exists() else pl.DataFrame()
     if len(df_videos) < len(videos):
         remaining = videos[len(df_videos):]
         for i in range(0, len(remaining), CHUNK_SIZE):
             chunk = remaining[i : i + CHUNK_SIZE]
             analyze_partial = partial(analyze_video, client=client, model=model)
-            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            with ThreadPoolExecutor(max_workers=NUM_WORKERS_CONTEXT) as executor:
                 analyses = list(tqdm(executor.map(analyze_partial, chunk), total=len(chunk), desc=f"Stage 1 chunk {i // CHUNK_SIZE + 1}"))
             df_videos = pl.concat([df_videos, pl.DataFrame(analyses)])
             df_videos.write_parquet(dest)

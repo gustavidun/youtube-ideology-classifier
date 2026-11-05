@@ -1,4 +1,4 @@
-""" Generate and evaluate teacher scores on context, alignment, ranking, and absolute estimation methods. """
+""" Generate teacher scores on human-labeled test set across conditions (with/without context, ranking, alignment, pointwise estimation etc.) """
 
 import polars as pl
 from pathlib import Path
@@ -13,7 +13,7 @@ PAIRS_PER_VIDEO = 5
 EVAL_PATH = DATA_DIR / "out" / "eval"
 model_names = get_model_name(CONTEXT_MODEL) + "-" + get_model_name(DECISION_MODEL)
 
-CONTEXT_DEST = EVAL_PATH / f"{model_names}" / "teacher" / f"human_metadata_with_context.parquet"
+CONTEXT_DEST = EVAL_PATH / "teacher" / f"{model_names}" / "human_metadata_with_context.parquet"
 print("Metadata dest: ", CONTEXT_DEST)
 
 CONDITIONS = {
@@ -29,7 +29,7 @@ CONDITIONS = {
     }
 }
 
-CONTEXT_DEST.parent.mkdir(exist_ok=True)
+CONTEXT_DEST.parent.mkdir(parents=True, exist_ok=True)
 human_metadata = pl.read_parquet(DATA_DIR / "human_labels" / "vid_metadata.parquet")
 
 def generate_context():
