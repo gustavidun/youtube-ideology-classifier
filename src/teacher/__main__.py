@@ -15,8 +15,8 @@ def main():
     parser.add_argument("--out_path", default="pair_similarity.parquet", required=False)
     parser.add_argument("--overwrite", default=False, action=argparse.BooleanOptionalAction)
     parser.add_argument("--context_model", default=CONTEXT_MODEL, required=False)
-    parser.add_argument("--decision_model", default="autotrust/JEV-27B", required=False)
-    parser.add_argument("--local", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--decision_model", default=DECISION_MODEL, required=False)
+    parser.add_argument("--local", action=argparse.BooleanOptionalAction, default=LOCAL_SERVER)
     
     args_cli = parser.parse_args()
 
@@ -29,7 +29,7 @@ def main():
     pa.LOCAL_SERVER = args_cli.local
     pc.LOCAL_SERVER = args_cli.local
 
-    decision_client = pa.create_decision_client()
+    decision_client = pa.create_decision_client(model=args_cli.decision_model)
     context_client = pc.create_context_client()
 
     if args_cli.mode == "context":
@@ -62,7 +62,7 @@ def main():
         political = [(v, pc.VideoAnalysis.model_validate_json(v["analysis_json"])) for v in political_records]
 
         pairs = pa.generate_pairs(political)
-        pa.score_pairs(pairs, pairwise_parquet, decision_client, questions=pa.Q_RANKING)
+        pa.score_pairs(pairs, pairwise_parquet, decision_client, questions=pa.Q_RANKING, model=args_cli.decision_model)
 
 
 if __name__ == "__main__":

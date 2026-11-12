@@ -10,13 +10,15 @@ from pathlib import Path
 from functools import partial
 
 from typing import Literal
+from pydantic import BaseModel, Field
+from openai import OpenAI, OpenAIError
 
 from src.config import OUT_DIR, ROOT
-from src.teacher.context import VideoAnalysis
-from src.teacher import DECISION_MODEL
+from src.teacher.context import VideoAnalysis, create_context_client
+from src.teacher import DECISION_MODEL, MODEL_EXTRA_ARGS
 
 LOCAL_SERVER = True
-NUM_WORKERS_DECISION = 64 if LOCAL_SERVER else 40
+NUM_WORKERS_DECISION = 10 if LOCAL_SERVER else 40
 
 CHUNK_SIZE = 1000
 PAIRS_PER_VIDEO = 5
@@ -108,9 +110,84 @@ Q_ABSOLUTE = {
     }
 }
 
+class ScoreItem(BaseModel):
+    score: int = Field(ge=0, le=4, description="Level 0 to 4 based on criteria")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
+class RankingItem(BaseModel):
+    is_more_right_leaning: bool = Field(description="True if video A is more right-leaning than video B")
+    confidence: float = Field(default=1.0, ge=0.5, le=1.0)
+
+class AlignmentAnalysis(BaseModel):
+    economic_alignment: ScoreItem
+    galtan_alignment: ScoreItem
+    overall_ideological_alignment: ScoreItem
+
+class RankingAnalysis(BaseModel):
+    is_more_right_leaning_economic: RankingItem
+    is_more_right_leaning_cultural: RankingItem
+    is_more_right_leaning_overall: RankingItem
+
+class AbsoluteAnalysis(BaseModel):
+    galtan_score: ScoreItem
+    economic_score: ScoreItem
+    overall_score: ScoreItem
+
+def _get_schema(questions: dict):
+    if "economic_alignment" in questions:
+        return AlignmentAnalysis
+    if "is_more_right_leaning_economic" in questions:
+        return RankingAnalysis
+    return AbsoluteAnalysis
+
 def _extract_probs(question_data: dict) -> dict[str, float]:
     probs = question_data.get("probabilities", {})
     return {str(k): round(float(probs.get(str(k), probs.get(k, 0.0))), 4) for k in range(5)}
+
+def _chat_api_inference(state: str, questions: dict, client: OpenAI, model: str = DECISION_MODEL) -> tuple[dict, dict]:
+    schema = _get_schema(questions)
+    criteria_text = "\n\n".join(
+        f"{q_key}:\n{q_data['instructions']}\n" + "\n".join(q_data.get("criteria", []))
+        for q_key, q_data in questions.items()
+    )
+    user_prompt = f"{state.strip()}\n\n{criteria_text}"
+
+    api_model = "qwen" if LOCAL_SERVER and "qwen" in model.lower() else model
+    model_kwargs = dict(MODEL_EXTRA_ARGS.get(model, {}))
+
+    resp = client.beta.chat.completions.parse(
+        model=api_model,
+        messages=[
+            {"role": "system", "content": "Analyze the videos and provide structured ratings according to the specified criteria."},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format=schema,
+        **model_kwargs,
+    )
+    parsed = resp.choices[0].message.parsed
+    usage = {
+        "prompt_tokens": resp.usage.prompt_tokens,
+        "completion_tokens": resp.usage.completion_tokens,
+    }
+
+    ans = {}
+    for q_key in questions:
+        val = getattr(parsed, q_key)
+        if hasattr(val, "score"):
+            conf = val.confidence
+            ans[q_key] = {
+                "score": val.score,
+                "confidence": conf,
+                "probabilities": {str(k): (conf if k == val.score else round((1.0 - conf) / 4, 4)) for k in range(5)},
+            }
+        else:
+            conf = val.confidence
+            ans[q_key] = {
+                "noul": val.is_more_right_leaning,
+                "confidence": conf,
+                "probabilities": {},
+            }
+    return ans, usage
 
 def _local_api_inference(state : str, questions : dict, client) -> dict:
     ans = {}
@@ -164,33 +241,34 @@ def _remote_api_inference(state : str, questions : dict, client) -> dict:
     res_data = resp.json()
     return res_data.get("answers"), res_data.get("usage")
 
-def create_decision_client():
-    if LOCAL_SERVER:
-        limits = httpx.Limits(
-            max_connections=256,
-            max_keepalive_connections=128,
-        )
-        decision_client = httpx.Client(
-            base_url="http://localhost:8000/v1",
-            headers={"Authorization": "Bearer EMPTY"},
-            timeout=300.0,
-            limits=limits,
-        )
-    else:
-        decision_client = httpx.Client(
-            base_url="https://openrouter.ai/api/alpha",
-            headers={"Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}"},
-            timeout=30.0,
-        )
-    return decision_client
+def create_decision_client(model: str = DECISION_MODEL):
+    if "jev" in model.lower():
+        if LOCAL_SERVER:
+            limits = httpx.Limits(
+                max_connections=256,
+                max_keepalive_connections=128,
+            )
+            return httpx.Client(
+                base_url="http://localhost:8000/v1",
+                headers={"Authorization": "Bearer EMPTY"},
+                timeout=300.0,
+                limits=limits,
+            )
+        else:
+            return httpx.Client(
+                base_url="https://openrouter.ai/api/alpha",
+                headers={"Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}"},
+                timeout=30.0,
+            )
+    return create_context_client()
 
 @retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=1, max=10),
-    retry=retry_if_exception_type(httpx.HTTPError),
+    retry=retry_if_exception_type((httpx.HTTPError, OpenAIError)),
     reraise=True,
 )
-def score_pair(pair: tuple, client, questions = Q_ALIGNMENT):
+def score_pair(pair: tuple, client, questions = Q_ALIGNMENT, model: str = DECISION_MODEL):
     (video_a, analysis_a), (video_b, analysis_b) = pair
 
     state = f"""
@@ -205,10 +283,13 @@ def score_pair(pair: tuple, client, questions = Q_ALIGNMENT):
     {f'Analysis: {analysis_b.model_dump_json()}' if analysis_b else ''}
     """
 
-    if LOCAL_SERVER:
-        ans, usage = _local_api_inference(state, questions, client)
+    if "jev" in model.lower():
+        if LOCAL_SERVER:
+            ans, usage = _local_api_inference(state, questions, client)
+        else:
+            ans, usage = _remote_api_inference(state, questions, client)
     else:
-        ans, usage = _remote_api_inference(state, questions, client)
+        ans, usage = _chat_api_inference(state, questions, client, model=model)
 
     output = {
         "id_a": video_a.get("id"),
@@ -248,17 +329,17 @@ def generate_pairs(videos : list[dict], pairs_per_video = PAIRS_PER_VIDEO) -> li
         for pair in itertools.pairwise(random.sample(videos, len(videos)))
     ]    
 
-def score_pairs(pairs : list[tuple[dict, dict|None]], dest: Path, client, questions=Q_ALIGNMENT):
+def score_pairs(pairs : list[tuple[dict, dict|None]], dest: Path, client, questions=Q_ALIGNMENT, model: str = DECISION_MODEL):
     df_pairs = pl.read_parquet(dest) if dest.exists() else pl.DataFrame()
     start_idx = len(df_pairs)
     remaining_pairs = pairs[start_idx:]
 
-    with tqdm(total=len(pairs), initial=start_idx, desc=f"Scoring pairs ({DECISION_MODEL})", unit="pair") as pbar:
+    with tqdm(total=len(pairs), initial=start_idx, desc=f"Scoring pairs ({model})", unit="pair") as pbar:
         for i in range(0, len(remaining_pairs), CHUNK_SIZE):
             chunk = remaining_pairs[i : i + CHUNK_SIZE]
             with ThreadPoolExecutor(max_workers=NUM_WORKERS_DECISION) as executor:
                 scored = []
-                score_pair_args = partial(score_pair, questions=questions, client=client)
+                score_pair_args = partial(score_pair, questions=questions, client=client, model=model)
                 for res in executor.map(score_pair_args, chunk):
                     scored.append(res)
                     pbar.update(1)

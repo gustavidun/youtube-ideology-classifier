@@ -10,9 +10,10 @@ CONFIG ?= configs/small_ranked.yaml
 VIDEOS_PATH ?= data/slants_train.csv
 CONTEXT_PATH ?= context.parquet
 OUT_PATH ?= pair_similarity.parquet
-DECISION_MODEL ?= autotrust/JEV-27B
-CONTEXT_MODEL ?= meta-llama/Llama-3.3-70B-Instruct
-LOCAL ?= false
+MODEL ?= Qwen/Qwen3.8-Flash-Next
+DECISION_MODEL ?= $(MODEL)
+CONTEXT_MODEL ?= $(MODEL)
+LOCAL ?= true
 OVERWRITE ?= false
 .PHONY: help install venv teacher-context teacher-pairs eval-teacher benchmark wrangle train serve-qwen8b serve-jev27b serve-qwen-flash clean all
 
@@ -80,7 +81,10 @@ teacher-pairs:
 		$(if $(filter true,$(OVERWRITE)),--overwrite,--no-overwrite)
 
 eval-teacher:
-	$(PYTHON) -m src.eval.teacher
+	$(PYTHON) -m src.eval.teacher \
+		--context_model $(CONTEXT_MODEL) \
+		--decision_model $(DECISION_MODEL) \
+		$(if $(filter true,$(LOCAL)),--local,--no-local)
 
 # ------------------------------------------------------------------------------
 # Evaluation Benchmark & Leaderboard
