@@ -72,7 +72,6 @@ def query_model(
 
     response = client.beta.chat.completions.parse(
         model=api_model,
-        temperature=0.1,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
